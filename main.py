@@ -15,7 +15,7 @@ class YoutubeDLApi:
         # Sicherstellen, dass der Download-Ordner existiert
         os.makedirs(self.download_path, exist_ok=True)
 
-    def download_video(self, youtube_url, quality="best"):
+    def download_video(self, youtube_url, quality="best", format_type="mp4"):
         """
         Startet den Download eines YouTube-Videos im Hintergrund
         """
@@ -32,7 +32,7 @@ class YoutubeDLApi:
         # Download im Hintergrund starten
         self.download_thread = threading.Thread(
             target=self._execute_download,
-            args=(youtube_url, quality)
+            args=(youtube_url, quality, format_type)
         )
         self.download_thread.daemon = True
         self.download_thread.start()
@@ -49,11 +49,20 @@ class YoutubeDLApi:
         match = re.match(youtube_regex, url)
         return match is not None
 
-    def _execute_download(self, youtube_url, quality):
+    def _execute_download(self, youtube_url, quality, format_type):
         """Führt den tatsächlichen Download mit yt-dlp aus"""
         try:
-            # Format je nach Qualitätseinstellung wählen
-            format_opt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" if quality == "best" else "worst[ext=mp4]/worst"
+            # Format je nach gewähltem Format und Qualitätseinstellung wählen
+            if format_type == "mp3":
+                # Für MP3 nur Audio herunterladen und in MP3 konvertieren
+                format_opt = "bestaudio"
+                post_process = ["--extract-audio", "--audio-format", "mp3", "--audio-quality", "0"]
+            else:  # MP4 Video
+                if quality == "best":
+                    format_opt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+                else:
+                    format_opt = "worst[ext=mp4]/worst"
+                post_process = []
 
             # yt-dlp Kommando vorbereiten
             cmd = [
@@ -63,6 +72,9 @@ class YoutubeDLApi:
                 "--output", os.path.join(self.download_path, "%(title)s.%(ext)s"),
                 "--progress-template", "%(progress._percent_str)s %(progress._speed_str)s"
             ]
+
+            # Post-Processing-Optionen hinzufügen (für MP3)
+            cmd.extend(post_process)
 
             # Prozess starten und Ausgabe erfassen
             process = subprocess.Popen(
@@ -154,6 +166,15 @@ html_content = """
             border: 1px solid #ddd;
             border-radius: 4px;
         }
+        .option-row {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        .option-row .form-group {
+            flex: 1;
+            margin-bottom: 0;
+        }
         button {
             background-color: #c00;
             color: white;
@@ -198,12 +219,22 @@ html_content = """
             <input type="text" id="youtube_url" placeholder="https://www.youtube.com/watch?v=...">
         </div>
 
-        <div class="form-group">
-            <label for="quality">Qualität:</label>
-            <select id="quality">
-                <option value="best">Beste Qualität</option>
-                <option value="worst">Niedrige Qualität (schneller)</option>
-            </select>
+        <div class="option-row">
+            <div class="form-group">
+                <label for="quality">Qualität:</label>
+                <select id="quality">
+                    <option value="best">Beste Qualität</option>
+                    <option value="worst">Niedrige Qualität (schneller)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="format">Dateiformat:</label>
+                <select id="format">
+                    <option value="mp4">MP4 Video</option>
+                    <option value="mp3">MP3 Audio</option>
+                </select>
+            </div>
         </div>
 
         <div class="buttons">
@@ -229,21 +260,35 @@ html_content = """
 
         // Warten bis das Fenster geladen ist
         window.addEventListener('pywebviewready', () => {
+            // Format-Abhängigkeit: Wenn MP3 ausgewählt ist, Qualitätsauswahl deaktivieren
+            const formatSelect = document.getElementById('format');
+            const qualitySelect = document.getElementById('quality');
+
+            formatSelect.addEventListener('change', () => {
+                if (formatSelect.value === 'mp3') {
+                    qualitySelect.disabled = true;
+                    updateStatus('MP3-Format ausgewählt: Nur Audio wird heruntergeladen');
+                } else {
+                    qualitySelect.disabled = false;
+                }
+            });
+
             // Download-Button-Handler
             const downloadBtn = document.getElementById('downloadBtn');
             downloadBtn.addEventListener('click', () => {
                 const url = document.getElementById('youtube_url').value;
                 const quality = document.getElementById('quality').value;
+                const format = document.getElementById('format').value;
 
                 if (!url) {
                     updateStatus('Bitte geben Sie eine YouTube-URL ein');
                     return;
                 }
 
-                updateStatus('Starte Download...');
+                updateStatus(`Starte Download als ${format.toUpperCase()}...`);
 
                 // API-Aufruf
-                pywebview.api.download_video(url, quality)
+                pywebview.api.download_video(url, quality, format)
                     .then(response => {
                         if (response.status === 'error') {
                             updateStatus(`Fehler: ${response.message}`);
@@ -269,7 +314,7 @@ html_content = """
 def main():
     api_instance = YoutubeDLApi()
     window = webview.create_window('YouTube Video Downloader', html=html_content, js_api=api_instance)
-    webview.start(debug=True)
+    webview.start(debug=False)
 
 
 if __name__ == '__main__':
